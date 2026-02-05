@@ -1,0 +1,46 @@
+{
+  "name": "PRO-GLAÇONS",
+  "short_name": "Pro-Glaçons",
+  "description": "Leader de la glace alimentaire à Lomé - Commandez vos glaçons en quelques clics",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#00ADEF",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "fr",
+  "categories": ["food", "shopping", "business"],
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Voir le catalogue",
+      "short_name": "Catalogue",
+      "description": "Parcourir nos produits",
+      "url": "/catalog",
+      "icons": [{"src": "/icons/icon.svg", "sizes": "96x96"}]
+    },
+    {
+      "name": "Suivre ma commande",
+      "short_name": "Suivi",
+      "description": "Voir l'état de ma commande",
+      "url": "/tracking",
+      "icons": [{"src": "/icons/icon.svg", "sizes": "96x96"}]
+    },
+    {
+      "name": "Admin Dashboard",
+      "short_name": "Admin",
+      "description": "Gérer les commandes et produits",
+      "url": "/admin",
+      "icons": [{"src": "/icons/icon.svg", "sizes": "96x96"}]
+    }
+  ],
+  "related_applications": [],
+  "prefer_related_applications": false
+}
