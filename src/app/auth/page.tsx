@@ -1,9 +1,8 @@
 import React, { Suspense } from 'react';
-import dynamic from 'next/dynamic';
 
 export const dynamic = 'force-dynamic';
 
-const AuthForm = dynamic(() => import('@/components/AuthForm'), { ssr: false });
+import AuthForm from '@/components/AuthForm';
 
 export default function AuthPage() {
   return (
