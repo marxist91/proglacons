@@ -25,7 +25,8 @@ export default function ProtectedRoute({
     if (isLoading) return;
 
     if (requireAuth && !isAuthenticated) {
-      router.push(`${redirectTo}?redirect=${encodeURIComponent(window.location.pathname)}`);
+      const redirectPath = typeof window !== 'undefined' ? `${redirectTo}?redirect=${encodeURIComponent(window.location.pathname)}` : redirectTo;
+      router.push(redirectPath);
       return;
     }
 

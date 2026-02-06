@@ -77,29 +77,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Charger le panier depuis localStorage au démarrage
   useEffect(() => {
-    const savedCart = localStorage.getItem('proglacons_cart');
-    if (savedCart) {
-      try { 
-        const parsed = JSON.parse(savedCart);
-        if (Array.isArray(parsed)) setCartItems(parsed); 
-      } catch (e) {}
+    if (typeof window !== 'undefined') {
+      const savedCart = localStorage.getItem('proglacons_cart');
+      if (savedCart) {
+        try { 
+          const parsed = JSON.parse(savedCart);
+          if (Array.isArray(parsed)) setCartItems(parsed); 
+        } catch (e) {}
+      }
     }
   }, []);
 
   // Sauvegarder le panier dans localStorage à chaque changement
   useEffect(() => {
-    if (cartItems.length > 0) {
-      localStorage.setItem('proglacons_cart', JSON.stringify(cartItems));
-    } else {
-      localStorage.removeItem('proglacons_cart');
+    if (typeof window !== 'undefined') {
+      if (cartItems.length > 0) {
+        localStorage.setItem('proglacons_cart', JSON.stringify(cartItems));
+      } else {
+        localStorage.removeItem('proglacons_cart');
+      }
     }
   }, [cartItems]);
 
   // Vérifier le token au démarrage
   useEffect(() => {
-    const savedFavs = localStorage.getItem('proglacons_favorites');
-    if (savedFavs) {
-      try { setFavorites(JSON.parse(savedFavs)); } catch (e) {}
+    if (typeof window !== 'undefined') {
+      const savedFavs = localStorage.getItem('proglacons_favorites');
+      if (savedFavs) {
+        try { setFavorites(JSON.parse(savedFavs)); } catch (e) {}
+      }
     }
 
     // Vérifier si un token existe et récupérer le profil
@@ -195,7 +201,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSession(null);
     // Vider le panier lors de la déconnexion
     setCartItems([]);
-    localStorage.removeItem('proglacons_cart');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('proglacons_cart');
+    }
     // Aussi déconnecter de Supabase
     supabase.auth.signOut();
   };
@@ -205,7 +213,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const newFavs = prev.includes(product.id) 
         ? prev.filter(id => id !== product.id)
         : [...prev, product.id];
-      localStorage.setItem('proglacons_favorites', JSON.stringify(newFavs));
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('proglacons_favorites', JSON.stringify(newFavs));
+      }
       return newFavs;
     });
   };

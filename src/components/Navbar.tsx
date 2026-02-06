@@ -232,13 +232,22 @@ const Navbar = () => {
                 )}
               </div>
             ) : (
-              <Link 
-                href="/auth"
-                className="group flex items-center gap-2 px-6 py-3 rounded-full bg-[#1E3A8A] hover:bg-[#00ADEF] transition-all text-sm font-black text-white shadow-lg shadow-[#1E3A8A]/20 transform active:scale-95"
-              >
-                <LogIn className="w-4 h-4" />
-                <span>Connexion</span>
-              </Link>
+              <>
+                <Link 
+                  href="/auth"
+                  className="group flex items-center gap-2 px-6 py-3 rounded-full bg-[#1E3A8A] hover:bg-[#00ADEF] transition-all text-sm font-black text-white shadow-lg shadow-[#1E3A8A]/20 transform active:scale-95"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span>Connexion</span>
+                </Link>
+                <Link 
+                  href="/driver"
+                  className="group flex items-center gap-2 px-6 py-3 ml-2 rounded-full bg-[#00ADEF] hover:bg-[#1E3A8A] transition-all text-sm font-black text-white shadow-lg shadow-[#00ADEF]/20 transform active:scale-95"
+                >
+                  <Truck className="w-4 h-4" />
+                  <span>Espace livreur</span>
+                </Link>
+              </>
             )}
 
             {/* Mobile Menu Toggle */}
@@ -283,8 +292,11 @@ const Navbar = () => {
                 {link.label}
               </Link>
             ))}
-            
-            <div className={`pt-6 border-t ${isDark ? 'border-slate-800' : 'border-slate-100'}`}>
+            {/* Ajout du switch de thème mobile */}
+            <div className="pt-4 flex justify-center">
+              <ThemeToggle />
+            </div>
+            <div className={`pt-6 border-t ${isDark ? 'border-slate-800' : 'border-slate-100'}`}> 
                <Link 
                 href="/catalog"
                  onClick={() => setIsMobileMenuOpen(false)}

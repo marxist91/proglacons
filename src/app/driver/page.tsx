@@ -1,4 +1,5 @@
-'use client';
+
+"use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
@@ -10,6 +11,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Order, Driver } from '@/types';
+
 
 type DriverStatus = 'Disponible' | 'En livraison' | 'Hors service';
 type DriverTab = 'deliveries' | 'profile';
@@ -57,7 +59,6 @@ export default function DriverDashboard() {
   // Charger les commandes assignées
   const fetchOrders = useCallback(async () => {
     if (!driver) return;
-    
     setIsRefreshing(true);
     try {
       const { data, error } = await supabase
@@ -66,18 +67,25 @@ export default function DriverDashboard() {
         .eq('driver_id', driver.id)
         .in('status', ['En attente', 'Préparation', 'Livraison en cours', 'En attente de confirmation'])
         .order('created_at', { ascending: false });
-      
       if (!error && data) {
         setOrders(data);
         // Trouver la commande active (en cours de livraison ou en attente de confirmation)
         const active = data.find(o => o.status === 'Livraison en cours' || o.status === 'En attente de confirmation');
         setActiveOrder(active || null);
+        // AUTOMATISATION : si une commande active existe et le statut n'est pas 'En livraison', on met à jour
+        if (active && driver.status !== 'En livraison') {
+          await updateDriverStatus('En livraison');
+        }
+        // Si aucune commande active et le statut est 'En livraison', repasser à 'Disponible'
+        if (!active && driver.status === 'En livraison') {
+          await updateDriverStatus('Disponible');
+        }
       }
     } catch (err) {
       console.error('Erreur fetch orders:', err);
     }
     setIsRefreshing(false);
-  }, [driver]);
+  }, [driver, driver?.status]);
 
   useEffect(() => {
     if (isAuthenticated && driver) {
@@ -491,17 +499,17 @@ export default function DriverDashboard() {
 
   // Dashboard livreur
   return (
-    <div className="min-h-screen bg-slate-900 text-white pb-24">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-slate-900/95 backdrop-blur-xl border-b border-slate-800 px-4 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-2xl flex items-center justify-center">
-              <Snowflake className="w-6 h-6" />
+              <Snowflake className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="font-black text-lg leading-tight">{driver?.name}</h1>
-              <p className="text-xs text-slate-400 font-medium">{driver?.phone}</p>
+              <h1 className="font-black text-lg leading-tight text-white">{driver?.name}</h1>
+              <p className="text-xs text-slate-300 font-medium">{driver?.phone}</p>
             </div>
           </div>
           <button
@@ -560,8 +568,8 @@ export default function DriverDashboard() {
               <div className="w-20 h-20 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-3 text-white text-2xl font-black">
                 {driver?.name?.charAt(0)?.toUpperCase() || 'L'}
               </div>
-              <h2 className="text-xl font-black">{driver?.name}</h2>
-              <p className="text-sm text-slate-400">Livreur</p>
+              <h2 className="text-xl font-black text-white">{driver?.name}</h2>
+              <p className="text-sm text-white">Livreur</p>
             </div>
 
             {/* Nom */}
@@ -676,50 +684,56 @@ export default function DriverDashboard() {
 
             <h3 className="text-xl font-black mb-2">{activeOrder.full_name}</h3>
             
-            <div className="space-y-3 mb-5">
-              <div className="flex items-start gap-3">
-                <MapPin className={`w-5 h-5 mt-0.5 ${activeOrder.status === 'En attente de confirmation' ? 'text-emerald-400' : 'text-amber-400'}`} />
-                <div className="flex-1">
-                  <p className="font-bold">{activeOrder.address}</p>
-                  <p className="text-sm text-slate-400">{activeOrder.neighborhood}</p>
-                </div>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(`${activeOrder.address}, ${activeOrder.neighborhood}`);
-                    setCopiedAddress(true);
-                    setTimeout(() => setCopiedAddress(false), 2000);
-                  }}
-                  className="p-2 bg-slate-700/50 rounded-lg"
-                >
-                  {copiedAddress ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4 text-slate-400" />}
-                </button>
-              </div>
-              
-              <div className="flex items-center gap-3">
-                <Phone className={`w-5 h-5 ${activeOrder.status === 'En attente de confirmation' ? 'text-emerald-400' : 'text-amber-400'}`} />
-                <span className="font-bold">{activeOrder.phone}</span>
-              </div>
+           <div className="space-y-3 mb-5">
+  <div className="flex items-start gap-3">
+    <MapPin className={`w-5 h-5 mt-0.5 ${activeOrder.status === 'En attente de confirmation' ? 'text-emerald-400' : 'text-amber-400'}`} />
+    <div className="flex-1">
+      <p className="font-bold text-white">{activeOrder.address}</p>
+      <p className="text-sm text-slate-100">{activeOrder.neighborhood}</p>
+    </div>
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(`${activeOrder.address}, ${activeOrder.neighborhood}`);
+        setCopiedAddress(true);
+        setTimeout(() => setCopiedAddress(false), 2000);
+      }}
+      className="p-2 bg-slate-700/50 rounded-lg"
+    >
+      {copiedAddress ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4 text-slate-100" />}
+    </button>
+  </div>
+  <div className="flex items-center gap-3">
+    <Phone className={`w-5 h-5 ${activeOrder.status === 'En attente de confirmation' ? 'text-emerald-400' : 'text-amber-400'}`} />
+    <span className="font-bold text-white">{activeOrder.phone}</span>
+  </div>
+  <div className="flex items-center gap-3">
+    <Package className={`w-5 h-5 ${activeOrder.status === 'En attente de confirmation' ? 'text-emerald-400' : 'text-amber-400'}`} />
+    <span className="font-bold text-white">{activeOrder.items?.length || 0} article(s) • {activeOrder.total?.toLocaleString()} F</span>
+  </div>
+</div>
 
-              <div className="flex items-center gap-3">
-                <Package className={`w-5 h-5 ${activeOrder.status === 'En attente de confirmation' ? 'text-emerald-400' : 'text-amber-400'}`} />
-                <span className="font-bold">{activeOrder.items?.length || 0} article(s) • {activeOrder.total?.toLocaleString()} F</span>
-              </div>
-            </div>
-
-            {/* GPS Status */}
-            {isTrackingLocation && activeOrder.status === 'Livraison en cours' && (
-              <div className="mb-4 p-3 bg-emerald-500/20 border border-emerald-500/30 rounded-xl flex items-center gap-3">
-                <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
-                <span className="text-sm font-bold text-emerald-400">GPS actif - Le client suit votre position</span>
-              </div>
-            )}
-            
-            {locationError && (
-              <div className="mb-4 p-3 bg-red-500/20 border border-red-500/30 rounded-xl flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400" />
-                <span className="text-sm text-red-400">{locationError}</span>
-              </div>
-            )}
+           {/* Diagnostic GPS tracking */}
+{activeOrder.status === 'Livraison en cours' && (
+  <>
+    {isTrackingLocation ? (
+      <div className="mb-4 p-3 bg-emerald-500/20 border border-emerald-500/30 rounded-xl flex items-center gap-3">
+        <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
+        <span className="text-sm font-bold text-emerald-400">GPS actif - Le client suit votre position</span>
+      </div>
+    ) : (
+      <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500/30 rounded-xl flex items-center gap-3">
+        <AlertCircle className="w-4 h-4 text-yellow-400" />
+        <span className="text-sm text-yellow-600 font-bold">Le suivi GPS n'est pas actif. Autorisez la géolocalisation ou vérifiez votre navigateur.</span>
+      </div>
+    )}
+    {locationError && (
+      <div className="mb-4 p-3 bg-red-500/20 border border-red-500/30 rounded-xl flex items-center gap-2">
+        <AlertCircle className="w-4 h-4 text-red-400" />
+        <span className="text-sm text-red-400">{locationError}</span>
+      </div>
+    )}
+  </>
+)}
 
             {/* Action Buttons */}
             <div className="grid grid-cols-3 gap-2 mb-4">
@@ -844,7 +858,7 @@ export default function DriverDashboard() {
       {/* Pending Orders */}
       <div className="px-4">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-black">Mes Commandes</h2>
+          <h2 className="text-lg font-black text-white">Mes Commandes</h2>
           <span className="bg-cyan-500/20 text-cyan-400 px-3 py-1 rounded-full text-xs font-bold">
             {orders.filter(o => o.status === 'En attente').length} en attente
           </span>

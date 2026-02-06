@@ -6,6 +6,8 @@ import { ThemeProvider } from "@/lib/theme";
 import ShopLayout from "@/components/ShopLayout";
 import Script from "next/script";
 
+export const dynamic = 'force-dynamic';
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],

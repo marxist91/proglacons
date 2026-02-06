@@ -43,12 +43,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     };
 
     if (theme === 'system') {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      applyTheme(mediaQuery.matches);
-      
-      const handler = (e: MediaQueryListEvent) => applyTheme(e.matches);
-      mediaQuery.addEventListener('change', handler);
-      return () => mediaQuery.removeEventListener('change', handler);
+      if (typeof window !== 'undefined') {
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        applyTheme(mediaQuery.matches);
+        
+        const handler = (e: MediaQueryListEvent) => applyTheme(e.matches);
+        mediaQuery.addEventListener('change', handler);
+        return () => mediaQuery.removeEventListener('change', handler);
+      }
     } else {
       applyTheme(theme === 'dark');
     }
