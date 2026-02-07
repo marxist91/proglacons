@@ -234,6 +234,7 @@ export default function DriverDashboard() {
 
   // Suivi GPS en temps réel
   const startLocationTracking = (orderId: string) => {
+      console.log('startLocationTracking called', orderId);
     if (!navigator.geolocation) {
       setLocationError('La géolocalisation n\'est pas supportée par votre navigateur');
       return;
@@ -242,7 +243,7 @@ export default function DriverDashboard() {
     setIsTrackingLocation(true);
     setLocationError(null);
 
-    const watchId = navigator.geolocation.watchPosition(
+        const watchId = navigator.geolocation.watchPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
         
@@ -272,8 +273,8 @@ export default function DriverDashboard() {
         }
       },
       (error) => {
-        console.error('Erreur GPS:', error);
-        setLocationError('Impossible d\'obtenir votre position');
+              console.error('Erreur GPS:', error);
+              setLocationError(`Impossible d'obtenir votre position (code ${error.code}: ${error.message})`);
         setIsTrackingLocation(false);
       },
       {
