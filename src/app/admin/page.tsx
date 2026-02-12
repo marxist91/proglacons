@@ -4949,9 +4949,10 @@ export default function AdminDashboard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, (payload) => {
         // Mettre à jour le produit spécifique au lieu de tout recharger
         if (payload.eventType === 'INSERT') {
-          setProducts(prev => [payload.new, ...prev]);
+          // Correction typage : forcer le cast en Product
+          setProducts(prev => [payload.new as Product, ...prev]);
         } else if (payload.eventType === 'UPDATE') {
-          setProducts(prev => prev.map(product => product.id === payload.new.id ? payload.new : product));
+          setProducts(prev => prev.map(product => product.id === payload.new.id ? (payload.new as Product) : product));
         } else if (payload.eventType === 'DELETE') {
           setProducts(prev => prev.filter(product => product.id !== payload.old.id));
         }
@@ -4993,9 +4994,9 @@ export default function AdminDashboard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, (payload) => {
         // Mettre à jour le profil spécifique au lieu de tout recharger
         if (payload.eventType === 'INSERT') {
-          setProfiles(prev => [payload.new, ...prev]);
+          setProfiles(prev => [payload.new as Profile, ...prev]);
         } else if (payload.eventType === 'UPDATE') {
-          setProfiles(prev => prev.map(profile => profile.id === payload.new.id ? payload.new : profile));
+          setProfiles(prev => prev.map(profile => profile.id === payload.new.id ? (payload.new as Profile) : profile));
         } else if (payload.eventType === 'DELETE') {
           setProfiles(prev => prev.filter(profile => profile.id !== payload.old.id));
         }
@@ -5003,9 +5004,9 @@ export default function AdminDashboard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, (payload) => {
         // Mettre à jour le driver spécifique au lieu de tout recharger
         if (payload.eventType === 'INSERT') {
-          setDrivers(prev => [payload.new, ...prev]);
+          setDrivers(prev => [payload.new as Driver, ...prev]);
         } else if (payload.eventType === 'UPDATE') {
-          setDrivers(prev => prev.map(driver => driver.id === payload.new.id ? payload.new : driver));
+          setDrivers(prev => prev.map(driver => driver.id === payload.new.id ? (payload.new as Driver) : driver));
         } else if (payload.eventType === 'DELETE') {
           setDrivers(prev => prev.filter(driver => driver.id !== payload.old.id));
         }

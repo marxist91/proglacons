@@ -1,4 +1,3 @@
-
 "use client";
 import dynamicImport from 'next/dynamic';
 const DeliveryMap = dynamicImport(() => import('@/components/DeliveryMap'), { ssr: false });
@@ -226,9 +225,10 @@ export default function TrackingPage() {
               if (prev && prev.lat === data.driver_latitude && prev.lng === data.driver_longitude) {
                 return prev; // Pas de changement
               }
+              // Correction : forcer le typage pour éviter undefined
               return {
-                lat: data.driver_latitude,
-                lng: data.driver_longitude
+                lat: data.driver_latitude ?? 0,
+                lng: data.driver_longitude ?? 0
               };
             });
           }

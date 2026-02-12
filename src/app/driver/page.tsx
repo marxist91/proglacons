@@ -1,5 +1,3 @@
-
-
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -153,7 +151,7 @@ export default function DriverDashboard() {
         let currentActive = activeOrder;
         if (currentActive && !['Livré', 'Annulé'].includes(currentActive.status)) {
           // Vérifier que cette commande existe toujours dans les données
-          const stillExists = data.find(o => o.id === currentActive.id);
+          const stillExists = data.find(o => o.id === currentActive?.id);
           if (stillExists) {
             currentActive = stillExists;
           } else {
