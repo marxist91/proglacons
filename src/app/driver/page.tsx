@@ -1120,6 +1120,16 @@ export default function DriverDashboard() {
           <div className={viewMode === 'card' ? "space-y-4" : "space-y-2"}>
             {orders
               .filter(o => activeTab === 'deliveries' ? o.status !== 'Livré' : o.status === 'Livré')
+              .sort((a, b) => {
+                // For history tab, sort by confirmed_at or created_at DESC (most recent first)
+                if (activeTab === 'history') {
+                  const dateA = new Date(a.confirmed_at || a.created_at).getTime();
+                  const dateB = new Date(b.confirmed_at || b.created_at).getTime();
+                  return dateB - dateA;
+                }
+                // For deliveries, keep original order (oldest first)
+                return 0;
+              })
               .map((order) => {
                 if (viewMode === 'list') {
                   return (
