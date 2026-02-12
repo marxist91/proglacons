@@ -2944,7 +2944,7 @@ const DeliveryMapTab: React.FC<DeliveryMapTabProps> = ({ orders, drivers, onAssi
   // Simulate driver locations
   useEffect(() => {
     const simulateDriverLocations = () => {
-      const activeDrivers = drivers.filter(d => d.status === 'Disponible' || d.is_available);
+      const activeDrivers = drivers.filter(d => d.status !== 'Hors service');
       const locations: DriverLocation[] = activeDrivers.map((driver) => {
         // Get orders assigned to this driver
         const driverOrders = orders.filter(o => 
@@ -3385,10 +3385,10 @@ const DeliveryMapTab: React.FC<DeliveryMapTabProps> = ({ orders, drivers, onAssi
                       >
                         <option value="">Assigner livreur...</option>
                         {driverLocations
-                          .filter(d => d.status === 'available')
+                          .filter(d => true) // Inclure tous les drivers actifs
                           .map(d => (
                             <option key={d.driver.id} value={d.driver.id}>
-                              {d.driver.name}
+                              {d.driver.name} ({d.status === 'available' ? 'Disponible' : d.status === 'delivering' ? 'En livraison' : d.status})
                             </option>
                           ))}
                       </select>
@@ -4914,11 +4914,15 @@ export default function AdminDashboard() {
           );
         }
         
-        fetchData();
+        // Ajouter la nouvelle commande à la liste existante au lieu de tout recharger
+        setOrders(prev => [newOrder, ...prev]);
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, async (payload) => {
         const updatedOrder = payload.new as Order;
         const oldOrder = payload.old as Partial<Order>;
+        
+        // Mettre à jour la commande spécifique au lieu de tout recharger
+        setOrders(prev => prev.map(order => order.id === updatedOrder.id ? updatedOrder : order));
         
         // Détecter si une commande vient de passer en "Livré" (confirmée par livreur ou client)
         if (updatedOrder.status === 'Livré' && oldOrder.status !== 'Livré') {
@@ -4941,10 +4945,17 @@ export default function AdminDashboard() {
             );
           }
         }
-        
-        fetchData();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, (payload) => {
+        // Mettre à jour le produit spécifique au lieu de tout recharger
+        if (payload.eventType === 'INSERT') {
+          setProducts(prev => [payload.new, ...prev]);
+        } else if (payload.eventType === 'UPDATE') {
+          setProducts(prev => prev.map(product => product.id === payload.new.id ? payload.new : product));
+        } else if (payload.eventType === 'DELETE') {
+          setProducts(prev => prev.filter(product => product.id !== payload.old.id));
+        }
+        
         // Détecter si le stock est bas après une mise à jour
         if (payload.eventType === 'UPDATE' && notificationConfig.notify_stock_alerts) {
           const updatedProduct = payload.new as { id: string; name: string; stock_quantity: number };
@@ -4978,10 +4989,27 @@ export default function AdminDashboard() {
             );
           }
         }
-        fetchData();
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, (payload) => {
+        // Mettre à jour le profil spécifique au lieu de tout recharger
+        if (payload.eventType === 'INSERT') {
+          setProfiles(prev => [payload.new, ...prev]);
+        } else if (payload.eventType === 'UPDATE') {
+          setProfiles(prev => prev.map(profile => profile.id === payload.new.id ? payload.new : profile));
+        } else if (payload.eventType === 'DELETE') {
+          setProfiles(prev => prev.filter(profile => profile.id !== payload.old.id));
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, (payload) => {
+        // Mettre à jour le driver spécifique au lieu de tout recharger
+        if (payload.eventType === 'INSERT') {
+          setDrivers(prev => [payload.new, ...prev]);
+        } else if (payload.eventType === 'UPDATE') {
+          setDrivers(prev => prev.map(driver => driver.id === payload.new.id ? payload.new : driver));
+        } else if (payload.eventType === 'DELETE') {
+          setDrivers(prev => prev.filter(driver => driver.id !== payload.old.id));
+        }
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_logs' }, async () => {
         // Rafraîchir les stock_logs quand il y a des changements
         const { data } = await supabase.from('stock_logs').select('*').order('created_at', { ascending: false }).limit(100);
@@ -7144,8 +7172,8 @@ export default function AdminDashboard() {
                 }
               }}
               onAutoAssignDriver={async (orderId, scheduledDate) => {
-                // Trouver le meilleur livreur disponible
-                const availableDrivers = drivers.filter(d => d.is_available !== false);
+                // Trouver le meilleur livreur disponible (tous sauf "Hors service")
+                const availableDrivers = drivers.filter(d => d.status !== 'Hors service');
                 if (availableDrivers.length === 0) return null;
                 
                 // Compter les livraisons par livreur pour cette date
@@ -7989,8 +8017,10 @@ export default function AdminDashboard() {
                   className="w-full bg-slate-900 border border-slate-700 rounded-2xl p-5 text-sm font-bold text-white outline-none"
                 >
                   <option value="">-- Choisir un livreur --</option>
-                  {drivers.filter(d => d.status === 'Disponible').map(d => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
+                  {drivers.filter(d => d.status !== 'Hors service').map(d => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} ({d.status === 'Disponible' ? 'Disponible' : d.status === 'En livraison' ? 'En livraison' : d.status})
+                    </option>
                   ))}
                 </select>
               </div>

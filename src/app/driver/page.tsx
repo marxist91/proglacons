@@ -1,22 +1,30 @@
 
+
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+
+
 import { useRouter } from 'next/navigation';
 import { 
   Truck, Package, MapPin, Phone, CheckCircle2, 
   Navigation, AlertCircle, Loader2, LogOut, RefreshCw, 
   ChevronRight, Play, MessageCircle, Copy, Check,
-  Snowflake, Home, User, Edit3, Save, X
+  Snowflake, Home, User, Edit3, Save, X, History, List, Grid3X3,
+  Calendar, Search, Download, BarChart3,
+  Filter
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Order, Driver } from '@/types';
 
 
-type DriverStatus = 'Disponible' | 'En livraison' | 'Hors service';
-type DriverTab = 'deliveries' | 'profile';
+type DriverTab = 'deliveries' | 'history' | 'profile';
 
 export default function DriverDashboard() {
+  // Hooks d'état et useRef
+
+  // Hooks d'état et useRef
+  const trackingStartedRef = useRef(false);
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -32,13 +40,85 @@ export default function DriverDashboard() {
   const [confirmationCode, setConfirmationCode] = useState('');
   const [showConfirmationInput, setShowConfirmationInput] = useState(false);
   const [confirmationError, setConfirmationError] = useState('');
-  
   // Profile states
   const [activeTab, setActiveTab] = useState<DriverTab>('deliveries');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileForm, setProfileForm] = useState({ name: '', phone: '' });
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
+  // Earnings filters
+  const [earningsPeriod, setEarningsPeriod] = useState<'day' | 'month' | 'year' | 'all'>('all');
+  const [earningsSearch, setEarningsSearch] = useState('');
+  const [showEarningsFilters, setShowEarningsFilters] = useState(false);
+  // Queue management
+  const [pendingOrders, setPendingOrders] = useState<Order[]>([]);
+
+  // Changer le statut du livreur
+  const updateDriverStatus = useCallback(async (status: 'Disponible' | 'En livraison' | 'Hors service') => {
+    if (!driver) return;
+    try {
+      await supabase
+        .from('drivers')
+        .update({ status })
+        .eq('id', driver.id);
+      setDriver({ ...driver, status });
+      localStorage.setItem('proglacons_driver', JSON.stringify({ ...driver, status }));
+    } catch (err) {
+      console.error('Erreur update status:', err);
+    }
+  }, [driver, setDriver]);
+
+  // Suivi GPS en temps réel
+  const startLocationTracking = useCallback((orderId: string) => {
+    console.log('startLocationTracking called', orderId);
+    if (!navigator.geolocation) {
+      setLocationError('La géolocalisation n\'est pas supportée par votre navigateur');
+      return;
+    }
+    setIsTrackingLocation(true);
+    setLocationError(null);
+    const watchId = navigator.geolocation.watchPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        try {
+          await supabase
+            .from('orders')
+            .update({ driver_latitude: latitude, driver_longitude: longitude })
+            .eq('id', orderId);
+          if (driver) {
+            await supabase
+              .from('drivers')
+              .update({ latitude, longitude, last_location_update: new Date().toISOString() })
+              .eq('id', driver.id);
+          }
+        } catch (err) {
+          console.error('Erreur update location:', err);
+        }
+      },
+      (error) => {
+        console.error('Erreur GPS:', error);
+        setLocationError(`Impossible d'obtenir votre position (code ${error.code}: ${error.message})`);
+        setIsTrackingLocation(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 5000
+      }
+    );
+    localStorage.setItem('gps_watch_id', String(watchId));
+  }, [driver, setIsTrackingLocation, setLocationError]);
+
+  // Arrêter le suivi GPS
+  const stopLocationTracking = useCallback(() => {
+    const watchId = localStorage.getItem('gps_watch_id');
+    if (watchId) {
+      navigator.geolocation.clearWatch(Number(watchId));
+      localStorage.removeItem('gps_watch_id');
+    }
+    setIsTrackingLocation(false);
+  }, [setIsTrackingLocation]);
 
   // Charger le livreur depuis localStorage
   useEffect(() => {
@@ -54,7 +134,7 @@ export default function DriverDashboard() {
       }
     }
     setIsLoading(false);
-  }, []);
+  }, [setDriver, setIsAuthenticated, setIsLoading, setProfileForm]);
 
   // Charger les commandes assignées
   const fetchOrders = useCallback(async () => {
@@ -65,35 +145,66 @@ export default function DriverDashboard() {
         .from('orders')
         .select('*')
         .eq('driver_id', driver.id)
-        .in('status', ['En attente', 'Préparation', 'Livraison en cours', 'En attente de confirmation'])
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true }); // Trier par heure d'arrivée (plus anciennes en premier)
       if (!error && data) {
         setOrders(data);
-        // Trouver la commande active (en cours de livraison ou en attente de confirmation)
-        const active = data.find(o => o.status === 'Livraison en cours' || o.status === 'En attente de confirmation');
-        setActiveOrder(active || null);
-        // AUTOMATISATION : si une commande active existe et le statut n'est pas 'En livraison', on met à jour
-        if (active && driver.status !== 'En livraison') {
-          await updateDriverStatus('En livraison');
+        
+        // Garder la commande active actuelle si elle existe et n'est pas terminée
+        let currentActive = activeOrder;
+        if (currentActive && !['Livré', 'Annulé'].includes(currentActive.status)) {
+          // Vérifier que cette commande existe toujours dans les données
+          const stillExists = data.find(o => o.id === currentActive.id);
+          if (stillExists) {
+            currentActive = stillExists;
+          } else {
+            currentActive = null;
+          }
+        } else {
+          currentActive = null;
         }
-        // Si aucune commande active et le statut est 'En livraison', repasser à 'Disponible'
-        if (!active && driver.status === 'En livraison') {
+        
+        // Si pas de commande active, prendre la première disponible (la plus ancienne)
+        if (!currentActive) {
+          currentActive = data.find(o => 
+            o.status === 'Livraison en cours' || 
+            o.status === 'En attente de confirmation' ||
+            o.status === 'Préparation'
+          ) || null;
+        }
+        
+        // Les commandes en attente sont toutes les autres non terminées, triées par heure d'arrivée
+        const pending = data.filter(o => 
+          o.id !== currentActive?.id && // Exclure la commande active
+          !['Livré', 'Annulé'].includes(o.status) // Exclure les terminées
+        );
+        
+        setActiveOrder(currentActive);
+        setPendingOrders(pending);
+        
+        // Gérer le statut du livreur selon la situation
+        if (currentActive && driver.status !== 'En livraison') {
+          // Il y a une livraison en cours, passer en "En livraison"
+          await updateDriverStatus('En livraison');
+        } else if (!currentActive && pending.length === 0) {
+          // Plus aucune commande active ou en attente, passer à "Disponible"
           await updateDriverStatus('Disponible');
         }
+        // Si pas de commande active mais des commandes en attente, garder le statut actuel
+        // (il peut être "En livraison" s'il vient de terminer une commande et attend la suivante)
       }
     } catch (err) {
       console.error('Erreur fetch orders:', err);
     }
     setIsRefreshing(false);
-  }, [driver, driver?.status]);
+  }, [driver, updateDriverStatus, setActiveOrder, setIsRefreshing, setOrders, activeOrder]);
 
   useEffect(() => {
     if (isAuthenticated && driver) {
       fetchOrders();
-      
+
       // Polling toutes les 30 secondes
       const interval = setInterval(fetchOrders, 30000);
-      
+
       // Realtime subscription
       const channel = supabase
         .channel('driver-orders')
@@ -106,13 +217,35 @@ export default function DriverDashboard() {
           fetchOrders();
         })
         .subscribe();
-      
+
       return () => {
         clearInterval(interval);
         supabase.removeChannel(channel);
       };
     }
   }, [isAuthenticated, driver, fetchOrders]);
+
+  // Démarrage automatique du tracking GPS si une commande passe en "Livraison en cours"
+  useEffect(() => {
+    if (
+      activeOrder &&
+      activeOrder.status === 'Livraison en cours' &&
+      !isTrackingLocation &&
+      !trackingStartedRef.current
+    ) {
+      startLocationTracking(activeOrder.id);
+      trackingStartedRef.current = true;
+    }
+    // Si plus de commande active ou statut différent, arrêter le tracking et reset le flag
+    if (!activeOrder || activeOrder.status !== 'Livraison en cours') {
+      if (isTrackingLocation) {
+        stopLocationTracking();
+      }
+      trackingStartedRef.current = false;
+    }
+  }, [activeOrder, activeOrder?.status, activeOrder?.id, isTrackingLocation, startLocationTracking, stopLocationTracking]);
+
+
 
   // Connexion livreur
   const handleLogin = async (e: React.FormEvent) => {
@@ -188,13 +321,13 @@ export default function DriverDashboard() {
       localStorage.setItem('proglacons_driver', JSON.stringify(updatedDriver));
       setProfileMessage({ type: 'success', text: '✅ Profil mis à jour!' });
       setIsEditingProfile(false);
-    } catch (err: any) {
-      setProfileMessage({ type: 'error', text: `❌ ${err.message}` });
+    } catch (err) {
+      setProfileMessage({ type: 'error', text: `❌ ${err instanceof Error ? err.message : 'Erreur inconnue'}` });
     } finally {
       setIsSavingProfile(false);
     }
   };
-
+/*
   // Changer le statut du livreur
   const updateDriverStatus = async (status: DriverStatus) => {
     if (!driver) return;
@@ -211,6 +344,7 @@ export default function DriverDashboard() {
       console.error('Erreur update status:', err);
     }
   };
+  */
 
   // Démarrer une livraison
   const startDelivery = async (order: Order) => {
@@ -223,15 +357,18 @@ export default function DriverDashboard() {
       await updateDriverStatus('En livraison');
       setActiveOrder({ ...order, status: 'Livraison en cours' });
       
+      // Retirer cette commande des pending orders
+      setPendingOrders(prev => prev.filter(o => o.id !== order.id));
+      
       // Démarrer le suivi GPS
       startLocationTracking(order.id);
       
-      fetchOrders();
+      // Pas besoin de fetchOrders() ici car on met à jour l'état localement
     } catch (err) {
       console.error('Erreur start delivery:', err);
     }
   };
-
+/*
   // Suivi GPS en temps réel
   const startLocationTracking = (orderId: string) => {
       console.log('startLocationTracking called', orderId);
@@ -287,32 +424,25 @@ export default function DriverDashboard() {
     // Stocker le watchId pour pouvoir l'arrêter plus tard
     localStorage.setItem('gps_watch_id', String(watchId));
   };
-
-  // Arrêter le suivi GPS
-  const stopLocationTracking = () => {
-    const watchId = localStorage.getItem('gps_watch_id');
-    if (watchId) {
-      navigator.geolocation.clearWatch(Number(watchId));
-      localStorage.removeItem('gps_watch_id');
-    }
-    setIsTrackingLocation(false);
-  };
-
+*/
   // Terminer une livraison - Marquer comme "Arrivé" (en attente de confirmation client)
   const markAsArrived = async (order: Order) => {
     try {
+      // Arrêter le suivi GPS dès que le livreur arrive
+      stopLocationTracking();
+
       // Générer un code de confirmation à 4 chiffres
       const code = Math.floor(1000 + Math.random() * 9000).toString();
-      
+
       await supabase
         .from('orders')
-        .update({ 
+        .update({
           status: 'En attente de confirmation',
           delivery_code: code,
           delivered_at: new Date().toISOString()
         })
         .eq('id', order.id);
-      
+
       setActiveOrder({ ...order, status: 'En attente de confirmation', delivery_code: code });
       setShowConfirmationInput(false);
       setConfirmationCode('');
@@ -390,13 +520,18 @@ export default function DriverDashboard() {
         }
       }
       
-      // Vérifier s'il reste des commandes
-      const remaining = orders.filter(o => o.id !== order.id && o.status !== 'Livré');
-      if (remaining.length === 0) {
+      // Vérifier s'il y a des commandes en attente à traiter
+      const nextPendingOrder = pendingOrders.length > 0 ? pendingOrders[0] : null;
+      
+      if (nextPendingOrder) {
+        // Passer automatiquement à la commande suivante
+        await startDelivery(nextPendingOrder);
+      } else {
+        // Aucune commande en attente, passer à Disponible et désactiver la commande active
         await updateDriverStatus('Disponible');
+        setActiveOrder(null);
       }
       
-      setActiveOrder(null);
       setShowConfirmationInput(false);
       setConfirmationCode('');
       setConfirmationError('');
@@ -528,7 +663,7 @@ export default function DriverDashboard() {
         <div className="bg-slate-800/50 rounded-2xl p-4 border border-slate-700">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Mon statut</p>
           <div className="grid grid-cols-3 gap-2">
-            {(['Disponible', 'En livraison', 'Hors service'] as DriverStatus[]).map((status) => (
+            {(['Disponible', 'En livraison', 'Hors service'] as ('Disponible' | 'En livraison' | 'Hors service')[]).map((status) => (
               <button
                 key={status}
                 onClick={() => updateDriverStatus(status)}
@@ -724,7 +859,7 @@ export default function DriverDashboard() {
     ) : (
       <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500/30 rounded-xl flex items-center gap-3">
         <AlertCircle className="w-4 h-4 text-yellow-400" />
-        <span className="text-sm text-yellow-600 font-bold">Le suivi GPS n'est pas actif. Autorisez la géolocalisation ou vérifiez votre navigateur.</span>
+        <span className="text-sm text-yellow-600 font-bold">Le suivi GPS n&#39;est pas actif. Autorisez la géolocalisation ou vérifiez votre navigateur.</span>
       </div>
     )}
     {locationError && (
@@ -856,14 +991,126 @@ export default function DriverDashboard() {
         </div>
       )}
 
-      {/* Pending Orders */}
-      <div className="px-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-black text-white">Mes Commandes</h2>
-          <span className="bg-cyan-500/20 text-cyan-400 px-3 py-1 rounded-full text-xs font-bold">
-            {orders.filter(o => o.status === 'En attente').length} en attente
-          </span>
+      {/* Pending Orders Queue */}
+      {pendingOrders.length > 0 && (
+        <div className="px-4 mb-4">
+          <div className="bg-gradient-to-r from-amber-500/20 to-orange-500/20 rounded-2xl p-4 border border-amber-500/30">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></div>
+              <span className="text-sm font-black text-amber-400 uppercase tracking-wider">
+                File d&apos;attente ({pendingOrders.length})
+              </span>
+            </div>
+            <div className="space-y-2">
+              {pendingOrders.slice(0, 3).map((order, index) => (
+                <div key={order.id} className="p-3 bg-slate-800/50 rounded-lg border border-slate-600">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-3">
+                      <span className="w-6 h-6 bg-amber-500/20 text-amber-400 rounded-full flex items-center justify-center text-xs font-bold">
+                        {index + 1}
+                      </span>
+                      <div>
+                        <p className="font-bold text-white text-sm">{order.full_name}</p>
+                        <p className="text-slate-400 text-xs">{order.neighborhood}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-bold text-cyan-400 text-sm">{order.total?.toLocaleString()} F</p>
+                      <span className={`inline-block px-2 py-1 rounded-full text-xs font-bold ${
+                        order.status === 'En attente' ? 'bg-amber-500/20 text-amber-400' :
+                        order.status === 'Préparation' ? 'bg-blue-500/20 text-blue-400' :
+                        'bg-slate-500/20 text-slate-400'
+                      }`}>
+                        {order.status}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => startDelivery(order)}
+                      className="flex-1 bg-cyan-500 hover:bg-cyan-600 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-1 transition-colors"
+                    >
+                      <Play className="w-3 h-3" />
+                      Commencer
+                    </button>
+                    <button
+                      onClick={() => openInMaps(order.address, order.neighborhood)}
+                      className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+                    >
+                      <Navigation className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {pendingOrders.length > 3 && (
+                <p className="text-center text-slate-400 text-xs mt-2">
+                  +{pendingOrders.length - 3} autres commandes en attente
+                </p>
+              )}
+            </div>
+          </div>
         </div>
+      )}
+
+        </>
+      )}
+
+      {/* Orders Section with Tabs */}
+      <div className="px-4 pb-24">
+        {/* Tab Navigation */}
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-lg font-black text-white">Mes Commandes</h2>
+          <div className="flex bg-slate-800/50 rounded-xl p-1 border border-slate-700">
+            <button
+              onClick={() => setActiveTab('deliveries')}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+                activeTab === 'deliveries'
+                  ? 'bg-cyan-500 text-white'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              En cours ({orders.filter(o => o.status !== 'Livré').length})
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+                activeTab === 'history'
+                  ? 'bg-cyan-500 text-white'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Historique ({orders.filter(o => o.status === 'Livré').length})
+            </button>
+          </div>
+        </div>
+
+        {/* View Mode Toggle */}
+        {orders.filter(o => activeTab === 'deliveries' ? o.status !== 'Livré' : o.status === 'Livré').length > 0 && (
+          <div className="flex items-center justify-end mb-4">
+            <div className="flex bg-slate-800/50 rounded-lg p-1 border border-slate-700">
+              <button
+                onClick={() => setViewMode('card')}
+                className={`p-2 rounded-md transition-colors ${
+                  viewMode === 'card'
+                    ? 'bg-cyan-500 text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Grid3X3 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                className={`p-2 rounded-md transition-colors ${
+                  viewMode === 'list'
+                    ? 'bg-cyan-500 text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <List className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {orders.length === 0 ? (
           <div className="bg-slate-800/50 rounded-3xl p-12 text-center border border-slate-700">
@@ -872,10 +1119,46 @@ export default function DriverDashboard() {
             <p className="text-slate-500 text-sm mt-1">Les nouvelles commandes apparaîtront ici</p>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className={viewMode === 'card' ? "space-y-4" : "space-y-2"}>
             {orders
-              .filter(o => o.status === 'En attente')
-              .map((order) => (
+              .filter(o => activeTab === 'deliveries' ? o.status !== 'Livré' : o.status === 'Livré')
+              .map((order) => {
+                if (viewMode === 'list') {
+                  return (
+                    <div
+                      key={order.id}
+                      className="bg-slate-800/50 rounded-xl p-4 border border-slate-700"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-3 h-3 rounded-full ${
+                            order.status === 'En attente' ? 'bg-amber-500' :
+                            order.status === 'Préparation' ? 'bg-blue-500' :
+                            order.status === 'Livraison en cours' ? 'bg-cyan-500' :
+                            order.status === 'En attente de confirmation' ? 'bg-emerald-500' :
+                            order.status === 'Livré' ? 'bg-green-500' :
+                            'bg-slate-500'
+                          }`}></div>
+                          <div>
+                            <p className="font-bold text-white text-sm">{order.full_name}</p>
+                            <p className="text-slate-400 text-xs">{order.neighborhood}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-bold text-cyan-400 text-sm">{order.total?.toLocaleString()} F</p>
+                          <p className="text-xs text-slate-500">
+                            {order.status === 'Livré' 
+                              ? new Date(order.created_at).toLocaleDateString('fr-FR')
+                              : new Date(order.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+                            }
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
                 <div
                   key={order.id}
                   className="bg-slate-800/50 rounded-2xl p-5 border border-slate-700"
@@ -884,12 +1167,30 @@ export default function DriverDashboard() {
                     <div>
                       <h3 className="font-bold text-lg">{order.full_name}</h3>
                       <p className="text-slate-400 text-sm">{order.neighborhood}</p>
+                      <span className={`inline-block px-2 py-1 rounded-full text-xs font-bold mt-2 ${
+                        order.status === 'En attente' ? 'bg-amber-500/20 text-amber-400' :
+                        order.status === 'Préparation' ? 'bg-blue-500/20 text-blue-400' :
+                        order.status === 'Livraison en cours' ? 'bg-cyan-500/20 text-cyan-400' :
+                        order.status === 'En attente de confirmation' ? 'bg-emerald-500/20 text-emerald-400' :
+                        order.status === 'Livré' ? 'bg-green-500/20 text-green-400' :
+                        'bg-slate-500/20 text-slate-400'
+                      }`}>
+                        {order.status}
+                      </span>
                     </div>
                     <div className="text-right">
                       <p className="font-black text-cyan-400">{order.total?.toLocaleString()} F</p>
                       <p className="text-xs text-slate-500">
-                        {new Date(order.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                        {order.status === 'Livré' 
+                          ? new Date(order.created_at).toLocaleDateString('fr-FR')
+                          : new Date(order.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+                        }
                       </p>
+                      {order.status === 'Livré' && order.confirmed_at && (
+                        <p className="text-xs text-green-400 mt-1">
+                          Livré le {new Date(order.confirmed_at).toLocaleDateString('fr-FR')}
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -908,22 +1209,411 @@ export default function DriverDashboard() {
                     </div>
                   </div>
 
-                  {!activeOrder && (
+                  {/* Actions based on status */}
+                  {order.status === 'En attente' && (
                     <button
                       onClick={() => startDelivery(order)}
                       className="w-full bg-cyan-500 hover:bg-cyan-600 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
                     >
-                      <Play className="w-5 h-5" />
+                      <Play className="w-4 h-4" />
+                      Commencer la livraison
+                    </button>
+                  )}
+
+                  {order.status === 'Préparation' && (
+                    <button
+                      onClick={() => startDelivery(order)}
+                      className="w-full bg-cyan-500 hover:bg-cyan-600 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <Play className="w-4 h-4" />
                       Démarrer la livraison
                     </button>
                   )}
+
+                  {order.status === 'Livraison en cours' && (
+                    <button
+                      onClick={() => markAsArrived(order)}
+                      className="w-full bg-emerald-500 hover:bg-emerald-600 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <MapPin className="w-4 h-4" />
+                      Arrivé à destination
+                    </button>
+                  )}
+
+                  {order.status === 'En attente de confirmation' && (
+                    <div className="space-y-3">
+                      <div className="text-center">
+                        <p className="text-sm text-slate-300 mb-2">
+                          Code de confirmation: <span className="font-bold text-cyan-400">{order.delivery_code}</span>
+                        </p>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(order.delivery_code || '');
+                            setCopiedAddress(true);
+                            setTimeout(() => setCopiedAddress(false), 2000);
+                          }}
+                          className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-lg transition-colors"
+                        >
+                          {copiedAddress ? 'Copié!' : 'Copier code'}
+                        </button>
+                      </div>
+                      <button
+                        onClick={() => confirmDeliveryWithCode(order)}
+                        className="w-full bg-emerald-500 hover:bg-emerald-600 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        Confirmer livraison
+                      </button>
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
+          </div>
+        )}
+
+        {/* Earnings Summary for History Tab */}
+        {activeTab === 'history' && orders.filter((o: Order) => o.status === 'Livré').length > 0 && (
+          <div className="mt-6 mb-8 space-y-4">
+            {/* Earnings Header with Controls */}
+            <div className="bg-slate-800/50 rounded-2xl p-5 border border-slate-700">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-lg text-white">📊 Mes Gains</h3>
+                <div className="flex items-center gap-2">
+                  {/* View Mode Toggle */}
+                  <div className="flex bg-slate-700/50 rounded-lg p-1">
+                    <button
+                      onClick={() => setViewMode('card')}
+                      className={`p-2 rounded-md transition-colors ${viewMode === 'card' ? 'bg-cyan-500 text-white' : 'text-slate-400 hover:text-white'}`}
+                    >
+                      <Grid3X3 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setViewMode('list')}
+                      className={`p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-cyan-500 text-white' : 'text-slate-400 hover:text-white'}`}
+                    >
+                      <List className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {/* Filters Toggle */}
+                  <button
+                    onClick={() => setShowEarningsFilters(!showEarningsFilters)}
+                    className={`p-2 rounded-lg transition-colors ${showEarningsFilters ? 'bg-cyan-500 text-white' : 'bg-slate-700/50 text-slate-400 hover:text-white'}`}
+                  >
+                    <Filter className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Filters Panel */}
+              {showEarningsFilters && (
+                <div className="space-y-4 mb-4 p-4 bg-slate-900/50 rounded-xl border border-slate-600">
+                  {/* Period Filter */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 mb-2">
+                      <Calendar className="w-4 h-4" /> Période
+                    </label>
+                    <div className="flex gap-2">
+                      {[
+                        { key: 'all', label: 'Tout' },
+                        { key: 'day', label: 'Aujourd\'hui' },
+                        { key: 'month', label: 'Ce mois' },
+                        { key: 'year', label: 'Cette année' }
+                      ].map((period) => (
+                        <button
+                          key={period.key}
+                          onClick={() => setEarningsPeriod(period.key as 'day' | 'month' | 'year' | 'all')}
+                          className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                            earningsPeriod === period.key
+                              ? 'bg-cyan-500 text-white'
+                              : 'bg-slate-700/50 text-slate-400 hover:bg-slate-600 hover:text-white'
+                          }`}
+                        >
+                          {period.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Search Filter */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 mb-2">
+                      <Search className="w-4 h-4" /> Recherche
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Rechercher par client, quartier..."
+                        value={earningsSearch}
+                        onChange={(e) => setEarningsSearch(e.target.value)}
+                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500"
+                      />
+                      <Search className="absolute right-3 top-3.5 w-4 h-4 text-slate-400" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Statistics Overview */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="text-center">
+                  <p className="text-2xl font-black text-cyan-400">
+                    {(() => {
+                      const filteredOrders = orders.filter((o: Order) => {
+                        if (o.status !== 'Livré') return false;
+                        if (earningsSearch) {
+                          const searchLower = earningsSearch.toLowerCase();
+                          return o.full_name?.toLowerCase().includes(searchLower) ||
+                                 o.neighborhood?.toLowerCase().includes(searchLower) ||
+                                 o.address?.toLowerCase().includes(searchLower);
+                        }
+                        if (earningsPeriod === 'all') return true;
+                        const orderDate = new Date(o.confirmed_at || o.created_at);
+                        const now = new Date();
+                        if (earningsPeriod === 'day') {
+                          return orderDate.toDateString() === now.toDateString();
+                        }
+                        if (earningsPeriod === 'month') {
+                          return orderDate.getMonth() === now.getMonth() && orderDate.getFullYear() === now.getFullYear();
+                        }
+                        if (earningsPeriod === 'year') {
+                          return orderDate.getFullYear() === now.getFullYear();
+                        }
+                        return true;
+                      });
+                      return filteredOrders.length;
+                    })()}
+                  </p>
+                  <p className="text-sm text-slate-400">Livraisons</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-black text-green-400">
+                    {(() => {
+                      const filteredOrders = orders.filter((o: Order) => {
+                        if (o.status !== 'Livré') return false;
+                        if (earningsSearch) {
+                          const searchLower = earningsSearch.toLowerCase();
+                          return o.full_name?.toLowerCase().includes(searchLower) ||
+                                 o.neighborhood?.toLowerCase().includes(searchLower) ||
+                                 o.address?.toLowerCase().includes(searchLower);
+                        }
+                        if (earningsPeriod === 'all') return true;
+                        const orderDate = new Date(o.confirmed_at || o.created_at);
+                        const now = new Date();
+                        if (earningsPeriod === 'day') {
+                          return orderDate.toDateString() === now.toDateString();
+                        }
+                        if (earningsPeriod === 'month') {
+                          return orderDate.getMonth() === now.getMonth() && orderDate.getFullYear() === now.getFullYear();
+                        }
+                        if (earningsPeriod === 'year') {
+                          return orderDate.getFullYear() === now.getFullYear();
+                        }
+                        return true;
+                      });
+                      return filteredOrders.reduce((sum, order) => sum + (order.total || 0), 0).toLocaleString();
+                    })()} F
+                  </p>
+                  <p className="text-sm text-slate-400">Total gagné</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-black text-purple-400">
+                    {(() => {
+                      const filteredOrders = orders.filter((o: Order) => {
+                        if (o.status !== 'Livré') return false;
+                        if (earningsSearch) {
+                          const searchLower = earningsSearch.toLowerCase();
+                          return o.full_name?.toLowerCase().includes(searchLower) ||
+                                 o.neighborhood?.toLowerCase().includes(searchLower) ||
+                                 o.address?.toLowerCase().includes(searchLower);
+                        }
+                        if (earningsPeriod === 'all') return true;
+                        const orderDate = new Date(o.confirmed_at || o.created_at);
+                        const now = new Date();
+                        if (earningsPeriod === 'day') {
+                          return orderDate.toDateString() === now.toDateString();
+                        }
+                        if (earningsPeriod === 'month') {
+                          return orderDate.getMonth() === now.getMonth() && orderDate.getFullYear() === now.getFullYear();
+                        }
+                        if (earningsPeriod === 'year') {
+                          return orderDate.getFullYear() === now.getFullYear();
+                        }
+                        return true;
+                      });
+                      const total = filteredOrders.reduce((sum, order) => sum + (order.total || 0), 0);
+                      const count = filteredOrders.length;
+                      return count > 0 ? Math.round(total / count).toLocaleString() : '0';
+                    })()} F
+                  </p>
+                  <p className="text-sm text-slate-400">Moyenne</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-black text-orange-400">
+                    {(() => {
+                      const filteredOrders = orders.filter((o: Order) => {
+                        if (o.status !== 'Livré') return false;
+                        if (earningsSearch) {
+                          const searchLower = earningsSearch.toLowerCase();
+                          return o.full_name?.toLowerCase().includes(searchLower) ||
+                                 o.neighborhood?.toLowerCase().includes(searchLower) ||
+                                 o.address?.toLowerCase().includes(searchLower);
+                        }
+                        if (earningsPeriod === 'all') return true;
+                        const orderDate = new Date(o.confirmed_at || o.created_at);
+                        const now = new Date();
+                        if (earningsPeriod === 'day') {
+                          return orderDate.toDateString() === now.toDateString();
+                        }
+                        if (earningsPeriod === 'month') {
+                          return orderDate.getMonth() === now.getMonth() && orderDate.getFullYear() === now.getFullYear();
+                        }
+                        if (earningsPeriod === 'year') {
+                          return orderDate.getFullYear() === now.getFullYear();
+                        }
+                        return true;
+                      });
+                      if (filteredOrders.length === 0) return '0h';
+                      const firstOrder = filteredOrders.reduce((earliest, order) => {
+                        const orderDate = new Date(order.confirmed_at || order.created_at);
+                        return orderDate < earliest ? orderDate : earliest;
+                      }, new Date());
+                      const lastOrder = filteredOrders.reduce((latest, order) => {
+                        const orderDate = new Date(order.confirmed_at || order.created_at);
+                        return orderDate > latest ? orderDate : latest;
+                      }, new Date(0));
+                      const hours = Math.round((lastOrder.getTime() - firstOrder.getTime()) / (1000 * 60 * 60));
+                      return `${hours}h`;
+                    })()}
+                  </p>
+                  <p className="text-sm text-slate-400">Temps actif</p>
+                </div>
+              </div>
+
+              {/* Export Button */}
+              <div className="flex justify-center mt-4">
+                <button
+                  onClick={() => {
+                    const filteredOrders = orders.filter((o: Order) => {
+                      if (o.status !== 'Livré') return false;
+                      if (earningsSearch) {
+                        const searchLower = earningsSearch.toLowerCase();
+                        return o.full_name?.toLowerCase().includes(searchLower) ||
+                               o.neighborhood?.toLowerCase().includes(searchLower) ||
+                               o.address?.toLowerCase().includes(searchLower);
+                      }
+                      if (earningsPeriod === 'all') return true;
+                      const orderDate = new Date(o.confirmed_at || o.created_at);
+                      const now = new Date();
+                      if (earningsPeriod === 'day') {
+                        return orderDate.toDateString() === now.toDateString();
+                      }
+                      if (earningsPeriod === 'month') {
+                        return orderDate.getMonth() === now.getMonth() && orderDate.getFullYear() === now.getFullYear();
+                      }
+                      if (earningsPeriod === 'year') {
+                        return orderDate.getFullYear() === now.getFullYear();
+                      }
+                      return true;
+                    });
+
+                    // Create CSV content
+                    const csvContent = [
+                      ['Date', 'Client', 'Quartier', 'Adresse', 'Téléphone', 'Articles', 'Montant', 'Statut'],
+                      ...filteredOrders.map(order => [
+                        new Date(order.confirmed_at || order.created_at).toLocaleDateString('fr-FR'),
+                        order.full_name,
+                        order.neighborhood,
+                        order.address,
+                        order.phone,
+                        order.items?.length || 0,
+                        order.total || 0,
+                        order.status
+                      ])
+                    ].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+
+                    // Download CSV
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                    const link = document.createElement('a');
+                    const url = URL.createObjectURL(blob);
+                    link.setAttribute('href', url);
+                    link.setAttribute('download', `gains_livreur_${new Date().toISOString().split('T')[0]}.csv`);
+                    link.style.visibility = 'hidden';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                  }}
+                  className="flex items-center gap-2 bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg font-bold text-sm transition-colors"
+                >
+                  <Download className="w-4 h-4" />
+                  Exporter Excel
+                </button>
+              </div>
+            </div>
+
+            {/* Filtered Orders List (when filters are active) */}
+            {(earningsPeriod !== 'all' || earningsSearch) && (
+              <div className="bg-slate-800/50 rounded-2xl p-5 border border-slate-700">
+                <h4 className="font-bold text-white mb-4 flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-cyan-400" />
+                  Livraisons filtrées
+                </h4>
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {(() => {
+                    const filteredOrders = orders.filter((o: Order) => {
+                      if (o.status !== 'Livré') return false;
+                      if (earningsSearch) {
+                        const searchLower = earningsSearch.toLowerCase();
+                        return o.full_name?.toLowerCase().includes(searchLower) ||
+                               o.neighborhood?.toLowerCase().includes(searchLower) ||
+                               o.address?.toLowerCase().includes(searchLower);
+                      }
+                      if (earningsPeriod === 'all') return true;
+                      const orderDate = new Date(o.confirmed_at || o.created_at);
+                      const now = new Date();
+                      if (earningsPeriod === 'day') {
+                        return orderDate.toDateString() === now.toDateString();
+                      }
+                      if (earningsPeriod === 'month') {
+                        return orderDate.getMonth() === now.getMonth() && orderDate.getFullYear() === now.getFullYear();
+                      }
+                      if (earningsPeriod === 'year') {
+                        return orderDate.getFullYear() === now.getFullYear();
+                      }
+                      return true;
+                    });
+
+                    return filteredOrders.length === 0 ? (
+                      <div className="text-center py-8 text-slate-400">
+                        <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                        <p>Aucune livraison trouvée pour ces filtres</p>
+                      </div>
+                    ) : (
+                      filteredOrders.map((order) => (
+                        <div key={order.id} className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg border border-slate-600">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3">
+                              <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                              <div>
+                                <p className="font-bold text-white">{order.full_name}</p>
+                                <p className="text-sm text-slate-400">{order.neighborhood} • {new Date(order.confirmed_at || order.created_at).toLocaleDateString('fr-FR')}</p>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-green-400">{order.total?.toLocaleString()} F</p>
+                            <p className="text-xs text-slate-500">{order.items?.length || 0} article(s)</p>
+                          </div>
+                        </div>
+                      ))
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
-        </>
-      )}
 
       {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 px-6 py-4">
@@ -934,6 +1624,13 @@ export default function DriverDashboard() {
           >
             <Truck className="w-6 h-6" />
             <span className="text-[10px] font-bold">Livraisons</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('history')}
+            className={`flex flex-col items-center gap-1 transition-colors ${activeTab === 'history' ? 'text-cyan-400' : 'text-slate-500 hover:text-slate-300'}`}
+          >
+            <History className="w-6 h-6" />
+            <span className="text-[10px] font-bold">Historique</span>
           </button>
           <button 
             onClick={() => setActiveTab('profile')}

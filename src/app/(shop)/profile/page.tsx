@@ -77,8 +77,8 @@ export default function ProfilePage() {
 
       setSaveMessage({ type: 'success', text: 'Profil mis à jour avec succès!' });
       setIsEditing(false);
-      // Recharger la page pour mettre à jour les données
-      setTimeout(() => window.location.reload(), 1500);
+      // Mettre à jour les données localement au lieu de recharger
+      setUserProfile(prev => prev ? { ...prev, ...editForm } : null);
     } catch (err: unknown) {
       let message = 'Erreur lors de la mise à jour';
       if (err instanceof Error) message = err.message;

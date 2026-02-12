@@ -168,10 +168,12 @@ export default function TrackingPage() {
       setConfirmSuccess(orderId);
       setTimeout(() => setConfirmSuccess(null), 5000);
       
-      // Rafraîchir les commandes côté client
-      if (typeof window !== 'undefined') {
-        setTimeout(() => window.location.reload(), 100);
-      }
+      // Les données se mettent à jour automatiquement via les subscriptions du contexte
+      // setOrders(prev => prev.map(o => 
+      //   o.id === orderId ? { ...o, status: 'Livré', confirmed_at: new Date().toISOString() } : o
+      // ));
+      // setOrderInDelivery(null);
+      // setDriverLocation(null);
     } catch (err) {
       console.error('Erreur confirmation:', err);
     }
@@ -202,13 +204,13 @@ export default function TrackingPage() {
     setIsLoadingLocation(false);
   }, [orderInDelivery]);
 
-  // Polling pour la position du livreur
+  // Polling pour la position du livreur - OPTIMISÉ
   useEffect(() => {
     if (orderInDelivery) {
       fetchDriverLocation();
-      const interval = setInterval(fetchDriverLocation, 10000); // Toutes les 10 secondes
+      const interval = setInterval(fetchDriverLocation, 30000); // Augmenté à 30 secondes
       
-      // Realtime subscription
+      // Realtime subscription - optimisée
       const channel = supabase
         .channel('driver-location')
         .on('postgres_changes', {
@@ -219,9 +221,15 @@ export default function TrackingPage() {
         }, (payload) => {
           const data = payload.new as { driver_latitude?: number, driver_longitude?: number };
           if (data.driver_latitude && data.driver_longitude) {
-            setDriverLocation({
-              lat: data.driver_latitude,
-              lng: data.driver_longitude
+            // Éviter les re-renders si la position n'a pas changé
+            setDriverLocation(prev => {
+              if (prev && prev.lat === data.driver_latitude && prev.lng === data.driver_longitude) {
+                return prev; // Pas de changement
+              }
+              return {
+                lat: data.driver_latitude,
+                lng: data.driver_longitude
+              };
             });
           }
         })

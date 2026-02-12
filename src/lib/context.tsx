@@ -260,28 +260,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 8000);
   };
 
+  // Protection contre les notifications en double
+  const notificationHistory = useRef<Set<string>>(new Set());
+
+  const addNotificationOnce = (key: string, title: string, message: string, type: AppNotification['type'] = 'info', cooldownMs: number = 10000) => {
+    if (notificationHistory.current.has(key)) return;
+    
+    notificationHistory.current.add(key);
+    addNotification(title, message, type);
+    
+    setTimeout(() => {
+      notificationHistory.current.delete(key);
+    }, cooldownMs);
+  };
+
   useEffect(() => {
     fetchData();
     const channel = supabase.channel('global-changes')
       .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'orders' }, (p: any) => {
-        fetchData();
+        // Mettre à jour seulement les commandes au lieu de tout recharger
+        if (p.eventType === 'INSERT') {
+          setOrders(prev => [p.new, ...prev]);
+        } else if (p.eventType === 'UPDATE') {
+          setOrders(prev => prev.map(order => order.id === p.new.id ? p.new : order));
+        } else if (p.eventType === 'DELETE') {
+          setOrders(prev => prev.filter(order => order.id !== p.old.id));
+        }
         
         // Admin notification for new orders
         if (p.eventType === 'INSERT' && userProfile?.role === 'admin') {
           audioRef.current?.play().catch(() => {});
-          addNotification('🆕 Nouvelle Commande', `De ${p.new.full_name || 'Client'} - ${p.new.total?.toLocaleString() || 0} FCFA`, 'success');
+          addNotificationOnce(`admin-new-order-${p.new.id}-${Date.now()}`, '🆕 Nouvelle Commande', `De ${p.new.full_name || 'Client'} - ${p.new.total?.toLocaleString() || 0} FCFA`, 'success', 15000);
         }
         
         // Admin notification for delivered orders
         if (p.eventType === 'UPDATE' && userProfile?.role === 'admin' && p.new.status === 'Livré' && p.old?.status !== 'Livré') {
           audioRef.current?.play().catch(() => {});
           const confirmedBy = p.new.confirmed_by === 'client' ? 'par le client' : p.new.confirmed_by === 'driver' ? 'par le livreur' : 'par l\'admin';
-          addNotification('✅ Commande Livrée!', `${p.new.full_name || 'Client'} - Confirmé ${confirmedBy}`, 'success');
+          addNotificationOnce(`admin-delivered-${p.new.id}-${Date.now()}`, '✅ Commande Livrée!', `${p.new.full_name || 'Client'} - Confirmé ${confirmedBy}`, 'success', 15000);
         }
         
         // Admin notification when driver arrives
         if (p.eventType === 'UPDATE' && userProfile?.role === 'admin' && p.new.status === 'En attente de confirmation' && p.old?.status !== 'En attente de confirmation') {
-          addNotification('📍 Livreur Arrivé', `${p.new.full_name || 'Client'} - En attente de confirmation`, 'info');
+          addNotificationOnce(`admin-driver-arrived-${p.new.id}-${Date.now()}`, '📍 Livreur Arrivé', `${p.new.full_name || 'Client'} - En attente de confirmation`, 'info', 15000);
         }
         
         // Client notification for order status updates
@@ -293,25 +314,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const status = p.new.status;
           const oldStatus = p.old?.status;
           
-          // Ne notifier que si le statut a changé
-          if (status !== oldStatus) {
-            if (status === 'Livraison en cours') {
-              audioRef.current?.play().catch(() => {});
-              addNotification('🚚 Livreur en Route!', 'Votre commande est en cours de livraison. Suivez-la en temps réel!', 'info');
-            } else if (status === 'En attente de confirmation') {
-              audioRef.current?.play().catch(() => {});
-              addNotification('📍 Livreur Arrivé!', `Donnez le code ${p.new.delivery_code || ''} au livreur pour confirmer`, 'warning');
-            } else if (status === 'Livré') {
-              audioRef.current?.play().catch(() => {});
-              addNotification('✅ Commande Livrée!', 'Merci pour votre commande! À bientôt 🧊', 'success');
-            } else if (status === 'Préparation') {
-              addNotification('📦 Commande en Préparation', 'Votre commande est en cours de préparation!', 'info');
-            }
+          // DEBUG: Log all updates to understand what's happening
+          console.log(`🔄 Order update:`, {
+            orderId: p.new.id,
+            oldStatus,
+            newStatus: status,
+            statusChanged: status !== oldStatus,
+            timestamp: new Date().toISOString()
+          });
+          
+          // Ne notifier QUE si le statut passe exactement à "Livraison en cours" depuis un autre statut
+          if (status === 'Livraison en cours' && oldStatus !== 'Livraison en cours') {
+            console.log(`🚚 Triggering delivery notification for order ${p.new.id}`);
+            audioRef.current?.play().catch(() => {});
+            addNotificationOnce(`delivery-started-${p.new.id}`, '🚚 Livreur en Route!', 'Votre commande est en cours de livraison. Suivez-la en temps réel!', 'info', 60000); // 1 minute cooldown
+          } else if (status === 'En attente de confirmation' && oldStatus !== 'En attente de confirmation') {
+            audioRef.current?.play().catch(() => {});
+            addNotificationOnce(`driver-arrived-${p.new.id}`, '📍 Livreur Arrivé!', `Donnez le code ${p.new.delivery_code || ''} au livreur pour confirmer`, 'warning', 60000);
+          } else if (status === 'Livré' && oldStatus !== 'Livré') {
+            audioRef.current?.play().catch(() => {});
+            addNotificationOnce(`order-delivered-${p.new.id}`, '✅ Commande Livrée!', 'Merci pour votre commande! À bientôt 🧊', 'success', 60000);
+          } else if (status === 'Préparation' && oldStatus !== 'Préparation') {
+            addNotificationOnce(`order-preparing-${p.new.id}`, '📦 Commande en Préparation', 'Votre commande est en cours de préparation!', 'info', 60000);
           }
         }
       })
-      .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'products' }, () => {
-        fetchData();
+      .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'products' }, (p: any) => {
+        // Mettre à jour seulement les produits au lieu de tout recharger
+        if (p.eventType === 'INSERT') {
+          setProducts(prev => [p.new, ...prev]);
+        } else if (p.eventType === 'UPDATE') {
+          setProducts(prev => prev.map(product => product.id === p.new.id ? p.new : product));
+        } else if (p.eventType === 'DELETE') {
+          setProducts(prev => prev.filter(product => product.id !== p.old.id));
+        }
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
