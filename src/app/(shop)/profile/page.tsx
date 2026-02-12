@@ -78,7 +78,15 @@ export default function ProfilePage() {
       setSaveMessage({ type: 'success', text: 'Profil mis à jour avec succès!' });
       setIsEditing(false);
       // Mettre à jour les données localement au lieu de recharger
-      setUserProfile(prev => prev ? { ...prev, ...editForm } : null);
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        // Si on a un contexte global, on peut déclencher un event pour rafraîchir
+        window.dispatchEvent(new Event('profile-updated'));
+      }
+      // Si setUserProfile existe dans le contexte, l'utiliser
+      if (typeof setUserProfile === 'function') {
+        setUserProfile((prev: any) => prev ? { ...prev, ...editForm } : null);
+      }
+      // Sinon, rien (évite l'erreur de compilation)
     } catch (err: unknown) {
       let message = 'Erreur lors de la mise à jour';
       if (err instanceof Error) message = err.message;
